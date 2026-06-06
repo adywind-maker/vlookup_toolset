@@ -87,6 +87,37 @@ def add_source_note(ws, row: int, note: str):
     cell.font = Font(name='Arial', italic=True, color='808080', size=9)
 
 
+# ── 共用：讀取 .ods / .xlsx / .xls ──────────────────────────────────────────
+
+def _read_excel_auto(path: str, dtype: dict | None = None) -> pd.DataFrame:
+    """依副檔名自動選擇引擎讀取試算表，並保留前導零欄位。"""
+    ext    = path.rsplit('.', 1)[-1].lower()
+    engine = 'odf' if ext == 'ods' else None   # xlsx/xls 用 openpyxl（預設）
+
+    df_raw = pd.read_excel(path, engine=engine, dtype=str)
+    df     = pd.read_excel(path, engine=engine, dtype=dtype or {})
+
+    # 有前導零的欄位強制保留文字
+    for col in df.columns:
+        if df_raw[col].astype(str).str.match(r'^0\d+$').any():
+            df[col] = df_raw[col]
+
+    # 移除 Total 合計列、全空列、備註列（由 txt2xlsx 加入的尾端資料）
+    first = df.columns[0]
+    mask  = df[first].astype(str).str.strip().isin(['Total', 'nan', '']) | df[first].isna()
+    if mask.any():
+        df = df.loc[:mask.idxmax() - 1]   # 保留第一個 Total/空列之前的資料
+
+    df = df.dropna(how='all').reset_index(drop=True)
+
+    # float 欄位若無小數則轉回 int（避免 303771.0 這樣的顯示）
+    for col in df.select_dtypes(include='float64').columns:
+        if df[col].dropna().apply(lambda x: x == int(x)).all():
+            df[col] = df[col].astype('Int64')
+
+    return df
+
+
 # ── 功能 1：VLOOKUP ──────────────────────────────────────────────────────────
 
 def run_vlookup(src1: str, src2: str, output: str):
@@ -98,14 +129,20 @@ def run_vlookup(src1: str, src2: str, output: str):
         src2   : test2 檔案路徑
         output : 輸出 xlsx 路徑
     """
-    df1 = pd.read_excel(src1, engine='odf', dtype={'ID': str})
-    df2 = pd.read_excel(src2, engine='odf', dtype={'ID': str})
-    df2['Start Date'] = pd.to_datetime(df2['Start Date'])
-    df2['End Date']   = pd.to_datetime(df2['End Date'])
+    df1 = _read_excel_auto(src1, dtype={'ID': str})
+    df2 = _read_excel_auto(src2, dtype={'ID': str})
+
+    # 自動偵測並解析日期欄位
+    for col in df2.columns:
+        if 'date' in col.lower():
+            try:
+                df2[col] = pd.to_datetime(df2[col])
+            except Exception:
+                pass
 
     merged = df2.merge(df1, on='ID', how='left')
-    cols   = ['ID', 'Start Date', 'End Date', 'Base Salary', 'Live allowance',
-              'Tax', 'Insurance', 'Net Pay']
+    # 欄位順序：先 df2 所有欄，再 df1 不重複的欄
+    cols   = list(df2.columns) + [c for c in df1.columns if c not in df2.columns]
     merged = merged[cols]
 
     wb = Workbook()
@@ -133,16 +170,7 @@ def run_column_extract(src: str, columns: list[str], output: str):
         columns : 要保留的欄位名稱清單，例如 ['ID', 'Net Pay']
         output  : 輸出 xlsx 路徑
     """
-    ext = src.rsplit('.', 1)[-1].lower()
-    if ext == 'ods':
-        # 所有欄位先以 str 讀入，再逐欄轉型，確保文字欄位前導零不消失
-        df_raw = pd.read_excel(src, engine='odf', dtype=str)
-        df     = pd.read_excel(src, engine='odf')
-        for col in df.columns:
-            if df_raw[col].str.match(r'^0\d+$').any():   # 有前導零 → 保留文字
-                df[col] = df_raw[col]
-    else:
-        df = pd.read_excel(src, dtype={'ID': str})
+    df = _read_excel_auto(src)
 
     # 檢查欄位是否存在
     missing = [c for c in columns if c not in df.columns]

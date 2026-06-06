@@ -1,4 +1,4 @@
-ID|Base Salary|Live Allownace|Tax|Insurance|Net Pay
+ID|Base Salary|Live Allowance|Tax|Insurance|Net Pay
 000001|300000|6000|1230|999|303771
 000002|40000|9000|2230|333|46437|
 000003|500000|3000|3330|900|498770|
