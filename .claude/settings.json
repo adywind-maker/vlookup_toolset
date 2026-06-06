@@ -7,7 +7,7 @@
           {
             "type": "command",
             "shell": "powershell",
-            "command": "$raw=[Console]::In.ReadToEnd(); $fp=try{($raw|ConvertFrom-Json).tool_input.file_path}catch{''}; if($fp-like'C:\\Users\\ASUS\\repo\\vlookup\\*'-and$fp-notlike'*\\.claude\\*'){ Set-Location 'C:\\Users\\ASUS\\repo\\vlookup'; git add -A; $st=git status --porcelain 2>$null; if($st){ git commit -m \"Auto-update: $(Get-Date -Format 'yyyy-MM-dd HH:mm')\"; git push origin master } }",
+            "command": "$raw=[Console]::In.ReadToEnd(); $fp=try{($raw|ConvertFrom-Json).tool_input.file_path}catch{''}; if($fp-like'C:\\Users\\ASUS\\repo\\vlookup\\*'-and$fp-notlike'*\\.claude\\*'){ Set-Location 'C:\\Users\\ASUS\\repo\\vlookup'; git add -A; $st=git status --porcelain 2>$null; if($st){ git commit -m \"Auto-update: $(Get-Date -Format 'yyyy-MM-dd HH:mm')\"; $pat=$env:GH_PAT; git -c credential.helper='' push \"https://adywind-maker:$pat@github.com/adywind-maker/vlookup_toolset.git\" master } }",
             "statusMessage": "Committing and pushing to GitHub...",
             "timeout": 30
           }
