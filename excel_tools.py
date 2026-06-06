@@ -3,21 +3,17 @@ import io
 import os
 import pandas as pd
 
-__version__ = '1.2.0'
+__version__ = '1.3.0'
 __updated__ = '2026-06-06'
 __features__ = [
-    ('vlookup', '以 ID 跨檔 VLOOKUP 合併，輸出 xlsx'),
-    ('extract', '從來源檔篩選指定欄位，輸出 xlsx'),
-    ('txt2ods', '文字檔轉 ODS，數字欄位自動加總'),
+    ('vlookup',  '以 ID 跨檔 VLOOKUP 合併，輸出 xlsx'),
+    ('extract',  '從來源檔篩選指定欄位，輸出 xlsx'),
+    ('txt2xlsx', '文字檔轉 xlsx，數字欄位自動加總'),
 ]
 import numpy as np
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
-from odf.opendocument import OpenDocumentSpreadsheet
-from odf.style import Style, TableCellProperties, TextProperties
-from odf.text import P
-from odf.table import Table, TableRow, TableCell
 
 
 # ── 共用樣式 ─────────────────────────────────────────────────────────────────
@@ -169,7 +165,7 @@ def run_column_extract(src: str, columns: list[str], output: str):
     print(result.to_string(index=False))
 
 
-# ── 功能 3：文字檔轉 ODS + 數字欄位加總 ──────────────────────────────────────
+# ── 功能 3：文字檔轉 xlsx + 數字欄位加總 ─────────────────────────────────────
 
 def _read_txt(path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
@@ -202,81 +198,13 @@ def _read_txt(path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     return df_raw, df_typed
 
 
-def _build_ods(df_final: pd.DataFrame, num_cols: list, text_cols: set,
-               n_data: int, src_name: str) -> OpenDocumentSpreadsheet:
-    """以 odfpy 建立帶樣式的 ODS 文件。"""
-
-    doc = OpenDocumentSpreadsheet()
-
-    def add_style(name: str, bold=False, bg=None, color=None):
-        s = Style(name=name, family='table-cell')
-        tp_kw = {}
-        if bold:  tp_kw['fontweight'] = 'bold'
-        if color: tp_kw['color'] = color
-        if tp_kw:
-            s.addElement(TextProperties(**tp_kw))
-        cp_kw = {'border': '0.5pt solid #BFBFBF', 'padding': '0.05cm'}
-        if bg: cp_kw['backgroundcolor'] = bg
-        s.addElement(TableCellProperties(**cp_kw))
-        doc.automaticstyles.addElement(s)
-
-    add_style('s_header', bold=True, bg='#2F5597', color='#FFFFFF')
-    add_style('s_even',   bg='#DCE6F1')
-    add_style('s_odd',    bg='#FFFFFF')
-    add_style('s_total',  bold=True, bg='#FFF2CC')
-
-    table = Table(name='Sheet1')
-    doc.spreadsheet.addElement(table)
-    cols = df_final.columns.tolist()
-
-    # 標題列
-    tr = TableRow()
-    table.addElement(tr)
-    for col in cols:
-        tc = TableCell(valuetype='string', stylename='s_header')
-        tc.addElement(P(text=str(col)))
-        tr.addElement(tc)
-
-    # 資料列 + 合計列
-    for i, row in df_final.iterrows():
-        is_total = (i == n_data)
-        sname    = 's_total' if is_total else ('s_even' if i % 2 == 0 else 's_odd')
-        tr = TableRow()
-        table.addElement(tr)
-
-        for col in cols:
-            val = row[col]
-            is_nan = val is None or (isinstance(val, float) and np.isnan(val))
-
-            if col in num_cols and not is_nan:
-                fval    = float(val)
-                display = str(int(fval)) if fval == int(fval) else str(fval)
-                tc = TableCell(valuetype='float', value=str(fval), stylename=sname)
-                tc.addElement(P(text=display))
-            else:
-                tc = TableCell(valuetype='string', stylename=sname)
-                tc.addElement(P(text='' if is_nan else str(val)))
-            tr.addElement(tc)
-
-    # 來源備註列（空一列後）
-    for _ in range(2):
-        table.addElement(TableRow())
-    tr_note = TableRow()
-    table.addElement(tr_note)
-    tc_note = TableCell(valuetype='string')
-    tc_note.addElement(P(text=f'Source: {src_name}  |  excel_tools v{__version__}  ({__updated__})'))
-    tr_note.addElement(tc_note)
-
-    return doc
-
-
-def run_txt_to_ods(folder: str, output_folder: str = None):
+def run_txt_to_xlsx(folder: str, output_folder: str = None):
     """
     掃描 folder 內所有 .txt / .csv / .tsv，逐一：
       1. 自動偵測分隔符並讀取
       2. 辨識文字欄位（前導零）與數字欄位
-      3. 在最後一列加入數字欄位合計
-      4. 輸出為 <原檔名>_converted.ods
+      3. 在最後一列加入數字欄位合計（黃底粗體）
+      4. 輸出為 <原檔名>_converted.xlsx
 
     Args:
         folder        : 來源資料夾
@@ -285,7 +213,7 @@ def run_txt_to_ods(folder: str, output_folder: str = None):
     if output_folder is None:
         output_folder = folder
 
-    TEXT_EXT = {'.txt', '.csv', '.tsv'}
+    TEXT_EXT  = {'.txt', '.csv', '.tsv'}
     txt_files = [
         os.path.join(folder, f)
         for f in os.listdir(folder)
@@ -293,55 +221,72 @@ def run_txt_to_ods(folder: str, output_folder: str = None):
     ]
 
     if not txt_files:
-        print('[TXT2ODS] 找不到文字檔（.txt / .csv / .tsv）')
+        print('[TXT2XLSX] 找不到文字檔（.txt / .csv / .tsv）')
         return
+
+    TOTAL_FONT = Font(name='Arial', bold=True, size=11)
+    TOTAL_FILL = PatternFill('solid', start_color='FFF2CC')
 
     for txt_path in txt_files:
         base     = os.path.splitext(os.path.basename(txt_path))[0]
-        out_path = os.path.join(output_folder, f'{base}_converted.ods')
+        out_path = os.path.join(output_folder, f'{base}_converted.xlsx')
 
         df_raw, df_typed = _read_txt(txt_path)
 
-        # 只保留兩者共有欄位，並去除全空欄
-        cols = [c for c in df_raw.columns if c in df_typed.columns]
+        cols     = [c for c in df_raw.columns if c in df_typed.columns]
         df_raw   = df_raw[cols].dropna(how='all').reset_index(drop=True)
         df_typed = df_typed[cols].dropna(how='all').reset_index(drop=True)
 
-        # 辨識文字欄位（含前導零）
-        text_cols = {
-            col for col in cols
-            if df_raw[col].str.match(r'^0\d+$').any()
-        }
-        # 辨識數字欄位
-        num_cols = [
-            col for col in cols
-            if col not in text_cols and pd.api.types.is_numeric_dtype(df_typed[col])
-        ]
+        text_cols = {col for col in cols if df_raw[col].str.match(r'^0\d+$').any()}
+        num_cols  = [col for col in cols
+                     if col not in text_cols and pd.api.types.is_numeric_dtype(df_typed[col])]
 
-        # 合併正確型別
         df = df_typed.copy()
         for col in text_cols:
             df[col] = df_raw[col]
 
-        # 合計列
-        n_data  = len(df)
+        # 合計列資料
         sum_row = {
             col: (df_typed[col].sum() if col in num_cols
                   else ('Total' if col == cols[0] else ''))
             for col in cols
         }
-        df_final = pd.concat([df, pd.DataFrame([sum_row])], ignore_index=True)
 
-        # 建立並儲存 ODS
-        doc = _build_ods(df_final, num_cols, text_cols, n_data,
-                         os.path.basename(txt_path))
+        # 建立 xlsx
+        wb = Workbook()
+        ws = wb.active
+        ws.title = 'Data'
+
+        # 主資料列（不含合計）
+        write_sheet(ws, df)
+
+        # 合計列（緊接資料後，列號 = 資料列數 + 標題列 + 1）
+        col_styles    = {col: detect_style(col, df[col].dtype) for col in cols}
+        total_row_num = len(df) + 2
+
+        for c, col in enumerate(cols, start=1):
+            cell            = ws.cell(row=total_row_num, column=c, value=sum_row[col])
+            cell.font       = TOTAL_FONT
+            cell.fill       = TOTAL_FILL
+            cell.border     = BORDER
+            if col_styles[col] == 'number':
+                cell.alignment     = RIGHT
+                cell.number_format = '#,##0'
+            else:
+                cell.alignment     = LEFT
+                cell.number_format = '@'
+
+        add_source_note(ws, total_row_num + 2,
+                        f'Source: {os.path.basename(txt_path)}')
+
         try:
-            doc.save(out_path)
+            wb.save(out_path)
         except PermissionError:
-            raise PermissionError(f'無法儲存 {out_path}，請先關閉該檔案後再執行。')
+            raise PermissionError(f'無法儲存 {out_path}，請先關閉該 Excel 檔案後再執行。')
 
-        print(f'[TXT2ODS] {os.path.basename(txt_path)} → {out_path}')
-        print(df_final.to_string(index=False))
+        df_preview = pd.concat([df, pd.DataFrame([sum_row])], ignore_index=True)
+        print(f'[TXT2XLSX] {os.path.basename(txt_path)} → {out_path}')
+        print(df_preview.to_string(index=False))
         print()
 
 
@@ -351,7 +296,7 @@ BASE = r'C:\Users\ASUS\repo\vlookup'
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description=f'Excel / ODS 工具集  v{__version__}',
+        description=f'Excel 工具集  v{__version__}',
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
@@ -375,10 +320,10 @@ if __name__ == '__main__':
     p_ex.add_argument('--columns', default='ID,Net Pay',                  help='欄位名稱，逗號分隔 (預設: ID,Net Pay)')
     p_ex.add_argument('--output',  default=f'{BASE}/output_extract.xlsx', help='輸出路徑 (預設: output_extract.xlsx)')
 
-    # -- txt2ods 子命令 --
-    p_t2o = subparsers.add_parser('txt2ods', help='文字檔轉 ODS，數字欄位自動加總')
-    p_t2o.add_argument('--folder',        default=BASE, help=f'文字檔所在資料夾 (預設: {BASE})')
-    p_t2o.add_argument('--output-folder', default=None, help='輸出資料夾 (預設: 同來源資料夾)')
+    # -- txt2xlsx 子命令 --
+    p_t2x = subparsers.add_parser('txt2xlsx', help='文字檔轉 xlsx，數字欄位自動加總')
+    p_t2x.add_argument('--folder',        default=BASE, help=f'文字檔所在資料夾 (預設: {BASE})')
+    p_t2x.add_argument('--output-folder', default=None, help='輸出資料夾 (預設: 同來源資料夾)')
 
     args = parser.parse_args()
 
@@ -389,5 +334,5 @@ if __name__ == '__main__':
         columns = [c.strip() for c in args.columns.split(',')]
         run_column_extract(args.src, columns, args.output)
 
-    elif args.command == 'txt2ods':
-        run_txt_to_ods(args.folder, args.output_folder)
+    elif args.command == 'txt2xlsx':
+        run_txt_to_xlsx(args.folder, args.output_folder)
